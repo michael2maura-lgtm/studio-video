@@ -1,0 +1,14 @@
+{
+  "name": "studio-video",
+  "owner": {
+    "name": "Michael Maura"
+  },
+  "description": "Studio Video: Claude monta i tuoi reel nel tuo stile.",
+  "plugins": [
+    {
+      "name": "studio-video",
+      "source": "./studio-video",
+      "description": "Monta i tuoi reel verticali dal girato grezzo: taglio, sottotitoli in italiano, titoli, effetti, suoni e musica nel tuo stile. Dici \"monta questo video\" e ricevi il reel finito."
+    }
+  ]
+}

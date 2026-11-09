@@ -1,0 +1,63 @@
+{
+  "nome": "Stile Glow",
+  "motore": "grafica",
+  "colori": {
+    "accento": "#E86530",
+    "accento_luce": "#FF8A4C",
+    "testo": "#F9F7F4",
+    "scuro": "#140E0A",
+    "banda": "#4A2412"
+  },
+  "font": {
+    "titoli": {
+      "file": "font/Archivo.ttf",
+      "famiglia": "Archivo",
+      "peso": 900,
+      "larghezza": 125
+    },
+    "mono": {
+      "file": "font/JetBrainsMono.ttf",
+      "famiglia": "JetBrains Mono"
+    }
+  },
+  "finale": false,
+  "suoni": {
+    "transizione": "suoni/transizione.mp3",
+    "impatto": "suoni/impatto.mp3",
+    "glitch": "suoni/glitch.mp3",
+    "pop": "suoni/pop.mp3",
+    "tastiera": "suoni/tastiera.mp3",
+    "ding": "suoni/ding.mp3",
+    "livello": "suoni/livello.mp3",
+    "click": "suoni/click.mp3",
+    "musica": "suoni/musica.wav",
+    "sfumatura": "suoni/sfumatura.mp3"
+  },
+  "descrizione": "Per i contenuti semplici: tu che parli, la sfumatura di luce tra una frase e l'altra, pop-up quando nomini qualcosa, il telefono in 3D quando parli di un'app e alla fine il commento da scrivere.",
+  "sottotitoli_nome": "glow",
+  "effetti": [
+    "zoom",
+    "popup",
+    "pillole",
+    "prompt",
+    "numero",
+    "targhetta",
+    "barrate",
+    "telefono3d",
+    "orbita",
+    "commento",
+    "caduta",
+    "timbro",
+    "segui",
+    "tessere",
+    "classifica",
+    "prima_dopo",
+    "grafico",
+    "muro",
+    "etichetta",
+    "mappa"
+  ],
+  "versione": "semplice",
+  "transizione": "sfumatura",
+  "mirino": false
+}

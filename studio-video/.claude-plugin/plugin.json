@@ -1,0 +1,9 @@
+{
+  "name": "studio-video",
+  "displayName": "Studio Video",
+  "version": "0.1.18",
+  "description": "Monta i tuoi reel verticali dal girato grezzo, nel tuo stile, in italiano.",
+  "author": {
+    "name": "Michael Maura"
+  }
+}

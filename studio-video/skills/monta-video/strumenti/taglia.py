@@ -1,0 +1,105 @@
+"""Passo 2: taglia il video direttamente dall'originale, seguendo lavori/<nome>/tagli.json.
+
+Uso:  python3 strumenti/taglia.py <nome-lavoro> [--voce-originale | --voce-forte]
+      La voce viene pulita (fruscio, rumori bassi, volume uniforme) e i video in HDR corretti nei colori, da soli.
+      --voce-originale: lascia la voce com'è registrata.
+      --voce-forte: pulizia forte, per i video girati in posti rumorosi (eco, passi, rumori di fondo).
+
+tagli.json lo scrive Claude dopo aver letto trascrizione.txt: l'ultima ripresa buona di ogni frase,
+via fuori onda e pause morte. Tempi in secondi del video ORIGINALE.
+  [{"id": "gancio", "da": 9.44, "a": 13.07, "riga": "Sento spesso dire..."}, ...]
+
+Scrive:
+  tagliato.mp4    1080x1920, 30 fotogrammi al secondo esatti, audio con dissolvenze di 30 ms ai tagli
+  segmenti.json   dove inizia ogni pezzo nel video tagliato (secondi e fotogramma)
+"""
+import os
+import sys
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from comune import DATI, FFMPEG, cartella_lavoro, codec_video, durata, esegui, leggi, scrivi  # noqa: E402
+
+FPS = 30
+DISSOLVENZA = 0.03  # 30 ms: niente "click" sui tagli
+# ripresi dal kit "Monta le tue Ads":
+# video girati in HDR (iPhone con HDR acceso): senza correzione i colori escono slavati
+# HDR dell'iPhone (HLG o PQ) portato ai colori normali: si passa dalla luce vera e si comprime piano verso il bianco,
+# così la pelle non diventa bianchissima (prima bastava un ritocco di contrasto, e il viso usciva sbiadito)
+COLORE_HDR = ("zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,tonemap=mobius:desat=0:param=0.3,"
+              "zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+# voce pulita: via i rumori bassi e il fruscio, volume più uniforme (il volume finale lo fa rendi.py)
+VOCE = "highpass=f=80,afftdn=nf=-25,acompressor=threshold=-20dB:ratio=3:attack=5:release=80"
+# --voce-forte: girato in una stanza che rimbomba o rumorosa. Niente compressore (alza le code dell'eco), via il "suono
+# di scatola" sui 300-500 Hz, un po' di presenza, rumore abbassato solo nelle pause. Una pulizia più forte rende la
+# voce metallica: provata e scartata da Michael, 2026-11-05.
+# Pezzi girati in posti diversi (fuori in strada, dentro una stanza): "voce" nel pezzo di tagli.json vale solo
+# per quel pezzo ("originale", "vento", "ai", "ai_forte", "normale", "forte", "leggera"). Fuori la correzione della stanza rovina la voce.
+VOCE_FORTE = ("highpass=f=100,afftdn=nf=-30,equalizer=f=380:t=q:w=1:g=-6,equalizer=f=900:t=q:w=1.5:g=-2,"
+              "equalizer=f=3200:t=q:w=1:g=3,equalizer=f=9000:t=q:w=1:g=1.5,deesser=i=0.3,"
+              "agate=threshold=0.01:ratio=2:attack=8:release=150:range=0.25")
+VOCE_LEGGERA = "highpass=f=80,afftdn=nf=-35"   # all'aperto: quasi naturale, via solo il fruscio
+VOCE_VENTO = "highpass=f=120:poles=2"   # solo via vento e rombi bassi, la voce resta com'è registrata
+# "ai": pulitore a rete neurale di ffmpeg (RNNoise) che separa la voce dal rumore di fondo; mix 0.85 lascia un filo
+# di ambiente, se no la voce suona finta. Modello: DATI/modelli/voce-rumore.rnnn (arnndn-models, std.rnnn).
+MODELLO_RNN = os.path.join(DATI, "modelli", "voce-rumore.rnnn").replace("\\", "/").replace(":", "\\:")
+VOCE_AI = f"highpass=f=120:poles=2,aresample=48000,arnndn=m='{MODELLO_RNN}':mix=0.85"
+VOCE_AI_FORTE = f"highpass=f=120:poles=2,aresample=48000,arnndn=m='{MODELLO_RNN}':mix=1"   # tutto il rumore via (Michael: meglio così)
+
+
+def e_hdr(video):
+    from comune import FFPROBE
+    out = esegui([FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_transfer",
+                  "-of", "csv=p=0", video]).stdout
+    return any(k in out for k in ("smpte2084", "arib-std-b67"))
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    cart = cartella_lavoro(sys.argv[1])
+    sorgente = leggi(os.path.join(cart, "sorgente.json"))
+    tagli = leggi(os.path.join(cart, "tagli.json"))
+    if not tagli:
+        sys.exit("tagli.json è vuoto")
+    for t in tagli:
+        if not 0 <= t["da"] < t["a"] <= sorgente["durata"] + 0.01:
+            sys.exit(f"Tempi sbagliati nel pezzo '{t['id']}': {t['da']} → {t['a']}")
+
+    hdr = e_hdr(sorgente["video"])
+    if hdr:
+        print("Il video è in HDR: correggo i colori.")
+    colore = f",{COLORE_HDR}" if hdr else ""
+    voce = "anull" if "--voce-originale" in sys.argv else VOCE_FORTE if "--voce-forte" in sys.argv else VOCE
+    filtri, segmenti, inizio = [], [], 0.0
+    for i, t in enumerate(tagli):
+        d = t["a"] - t["da"]
+        filtri.append(f"[0:v]trim={t['da']}:{t['a']},setpts=PTS-STARTPTS,"
+                      f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1{colore}[v{i}]")
+        pulizia = {"originale": "anull", "normale": VOCE, "forte": VOCE_FORTE, "leggera": VOCE_LEGGERA, "vento": VOCE_VENTO, "ai": VOCE_AI, "ai_forte": VOCE_AI_FORTE}.get(t.get("voce"), voce)
+        filtri.append(f"[0:a]atrim={t['da']}:{t['a']},asetpts=PTS-STARTPTS,{pulizia},"
+                      f"afade=t=in:d={DISSOLVENZA},afade=t=out:st={d - DISSOLVENZA:.3f}:d={DISSOLVENZA}[a{i}]")
+        segmenti.append({"id": t["id"], "inizio": round(inizio, 3), "fotogramma": round(inizio * FPS),
+                         "durata": round(d, 3), "da_originale": t["da"], "a_originale": t["a"]})
+        inizio += d
+    n = len(tagli)
+    filtri.append("".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[vc][ac]")
+    # fotogrammi regolari dal tempo zero: le scritte e gli effetti dopo restano a tempo fino alla fine
+    filtri.append(f"[vc]fps={FPS},setpts=N/{FPS}/TB[v]")
+    filtri.append("[ac]anull[a]")
+
+    dest = os.path.join(cart, "tagliato.mp4")
+    print(f"Taglio {n} pezzi dall'originale...")
+    esegui([FFMPEG, "-v", "error", "-y", "-i", sorgente["video"], "-filter_complex", ";".join(filtri),
+            "-map", "[v]", "-map", "[a]", *codec_video(),
+            *(["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"] if hdr else []), "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+            "-movflags", "+faststart", dest])
+    scrivi(os.path.join(cart, "segmenti.json"), segmenti)
+    finale = durata(dest)
+    print(f"Fatto: {sorgente['durata']:.1f} s → {finale:.1f} s (attesi {inizio:.1f} s)")
+    for s in segmenti:
+        print(f"  {s['inizio']:6.2f} s  {s['id']:<10} ({s['durata']:.1f} s)")
+
+
+if __name__ == "__main__":
+    main()
